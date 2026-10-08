@@ -22,11 +22,18 @@ MAX_SYSTEM_CHARS = 500
 MAX_TOOLS = 20
 MAX_TOOLS_CHARS = 32000
 
+# /v1/systemone limits. Each question becomes a synthetic tool, so the count is
+# bounded far below MAX_TOOLS; the state plays the same role as /complete input.
+MAX_SYSTEMONE_QUESTIONS = 8
+MAX_SYSTEMONE_STATE_CHARS = 2000
+MAX_SYSTEMONE_OPTIONS = 255  # choice options, per the System One spec
+MAX_SYSTEMONE_LEVELS = 10    # score levels, per the System One spec
+
 # Throughput peaks at two concurrent engine operations and falls beyond that.
 CONCURRENCY = 2
 MAX_QUEUE = 32
 QUEUE_TIMEOUT_S = 10.0
-REQUEST_DEADLINE_S = 5.0
+REQUEST_DEADLINE_S = 10.0
 SPAWN_TIMEOUT_S = 30.0
 
 MEMORY_CAP_MB = 1500

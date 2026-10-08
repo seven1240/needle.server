@@ -138,7 +138,7 @@ r = complete(input="actually delete that note", history=history)
 | replayed history turns | 6 (oldest dropped first) |
 | `tools` | 1 to 20, at most 32,000 characters of JSON |
 | `system` length | 500 characters |
-| time to answer | 5 s |
+| time to answer | 10 s |
 
 Errors are `{"error": {"code": "...", "message": "..."}}`:
 
@@ -157,6 +157,72 @@ History that does not fit is dropped silently, oldest first, and counted in `ser
 ## Speed
 
 On an Apple M4 Pro: about 40 ms per request on a warm engine. The first request for a new toolset adds about 0.1 s (3 tools) to 1 s (20 tools). Two requests run at a time; the rest queue briefly. Idle engines stop after 10 minutes.
+
+## Evaluation: `POST /v1/systemone`
+
+Evaluate a `state` against a map of typed `questions` and get one structured `answer` per question. This mirrors TypeSafe's System One (Jev) evaluation API. The three question types:
+
+- `noul` - is a yes/no condition true?
+- `choice` - which of several options fits best? (max 255 options)
+- `score` - where does the state fall on an ordered rubric? (2 to 10 levels)
+
+```json
+POST /v1/systemone
+Authorization: Bearer <API_KEY>
+Content-Type: application/json
+
+{
+  "state": "Help! My payouts have been failing for 3 days.",
+  "model": "jev-latest",
+  "questions": {
+    "is_urgent": {
+      "type": "noul",
+      "instructions": "Is this urgent?",
+      "criteria": {"true": "an active problem blocks the user", "false": "informational"}
+    },
+    "department": {
+      "type": "choice",
+      "instructions": "Which team should handle this?",
+      "criteria": {"billing": "payment problems", "technical": "product bugs", "sales": "signing up"}
+    },
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated is the user?",
+      "criteria": ["Calm", "Frustrated", "Very angry"]
+    }
+  }
+}
+```
+
+- `state` (string or structured JSON, required) - the content to evaluate.
+- `model` (string, optional, default `jev-latest`) - accepted for compatibility and ignored; the response `model` reports the serving model.
+- `questions` (map of question id to question, required). Each question has a `type` and `instructions` (string, object or array). `criteria` is optional for `noul`, required for `choice` and `score`. Answer ids mirror your question keys.
+
+Each question is answered by a synthetic tool call against the same engine as `/complete`, so the model returns the single answer plus a `confidence` in `[0, 1]`; the endpoint folds that confidence into an approximate probability distribution (the chosen/yes/level gets the confidence, the rest is spread evenly).
+
+Response - `model`, `answers` (keyed by your question ids), `usage`:
+
+```json
+{
+  "model": "needle3",
+  "answers": {
+    "is_urgent": {"type": "noul", "noul": 0.9},
+    "department": {"type": "choice", "choice": "billing",
+      "probabilities": {"billing": 0.9, "technical": 0.05, "sales": 0.05}, "confidence": 0.9},
+    "frustration": {"type": "score", "score": 1.1,
+      "legend": {"0": "Calm", "1": "Frustrated", "2": "Very angry"},
+      "probabilities": {"0": 0.05, "1": 0.9, "2": 0.05}, "confidence": 0.9}
+  },
+  "usage": {"input_tokens": 0, "output_tokens": 0}
+}
+```
+
+- `noul.noul` - probability the condition is true, `0` (no) to `1` (yes).
+- `choice.choice` - the chosen option key; `probabilities` maps every option key to its probability; they sum to at most 1 (the residual is the share the model did not commit to).
+- `score.score` - the probability-weighted index into `legend` (can land between levels); `legend` maps level index to its description.
+- `usage` - token counts are not measurable on this engine and are always `0`.
+
+Limits - at most 8 questions, `state` at most 2,000 characters, `choice` at most 255 options, `score` 2-10 levels. Errors use the same `{"error": {"code", "message"}}` body and statuses as `/complete` (400 on bad requests, 429 when busy, 503 on engine failure, 504 on timeout; 422 on a malformed body). An `Authorization` header is accepted but not checked.
 
 ## Other endpoints
 

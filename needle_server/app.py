@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 
 from . import config
 from .pool import Pool, PoolError
+from .systemone import RequestError, SystemOneRequest, parse_answers, translate
 
 
 class CompleteRequest(BaseModel):
@@ -20,12 +21,6 @@ class CompleteRequest(BaseModel):
     tools: list[dict[str, Any]]
     system: str | None = None
     history: list[str] = []
-
-
-class RequestError(Exception):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def error_response(status: int, code: str, message: str, headers: dict | None = None) -> JSONResponse:
@@ -135,6 +130,25 @@ def create_app(pool: Pool | None = None) -> FastAPI:
             "queue_ms": round(result.queue_ms, 1),
             "engine_ms": round(result.engine_ms, 1),
         }}
+
+    @app.post("/v1/systemone")
+    async def systemone(request: SystemOneRequest):
+        try:
+            tools_json, system, input_text = translate(request)
+        except RequestError as exc:
+            return error_response(400, exc.code, str(exc))
+        try:
+            result = await pool.run(tools_json, system, [input_text])
+        except PoolError as exc:
+            headers = {"Retry-After": "1"} if exc.status in (429, 503) else None
+            return error_response(exc.status, exc.code, str(exc), headers)
+        calls = result.envelope.get("function_calls") or []
+        confidence = float(result.envelope.get("confidence", 0.0))
+        return {
+            "model": config.MODEL_ID,
+            "answers": parse_answers(calls, request.questions.items(), confidence),
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        }
 
     @app.get("/health")
     async def health():
